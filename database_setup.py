@@ -2,6 +2,7 @@ from pymongo import MongoClient, ASCENDING
 from pymongo.server_api import ServerApi
 import logging
 from datetime import datetime
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -9,24 +10,48 @@ logger = logging.getLogger(__name__)
 def setup_product_database():
     """Setup product reference database with sample data"""
     uri = "add your string"
-    
+
+    retry_attempts = 5  # Number of retries for connecting to the database
+    retry_delay = 1  # Initial delay in seconds
+    max_delay = 16  # Maximum delay for exponential backoff
+    timeout = 10  # Timeout for MongoDB operations in seconds
+
+    client = None
+    for attempt in range(1, retry_attempts + 1):
+        try:
+            logger.info(f"Attempting to connect to MongoDB (Attempt {attempt}/{retry_attempts})...")
+            client = MongoClient(uri, server_api=ServerApi('1'), serverSelectionTimeoutMS=timeout * 1000)
+            client.admin.command('ping')
+            logger.info("Connected to MongoDB successfully!")
+            break
+        except Exception as e:
+            logger.warning(f"Connection attempt {attempt} failed: {e}")
+            if attempt == retry_attempts:
+                logger.error("All retry attempts failed. Exiting.")
+                return
+            retry_delay = min(max_delay, retry_delay * 2)  # Exponential backoff
+            time.sleep(retry_delay)
+
+    if not client:
+        logger.error("Failed to establish a MongoDB connection.")
+        return
+
     try:
-        client = MongoClient(uri, server_api=ServerApi('1'))
         db = client.social_media_products
-        
+
         # Create collections
         product_references = db.product_references
         listings = db.listings
-        
+
         # Create indexes
         product_references.create_index([("category", ASCENDING)])
         product_references.create_index([("subcategory", ASCENDING)])
         product_references.create_index([("keywords", ASCENDING)])
         product_references.create_index([("brand_options", ASCENDING)])
-        
+
         listings.create_index([("product_id", ASCENDING)])
         listings.create_index([("created_at", ASCENDING)])
-        
+
         # Sample product reference data
         sample_products = [
             {
@@ -84,15 +109,15 @@ def setup_product_database():
                 "keywords": ["smartwatch", "fitness tracker", "smart watch", "wearable"]
             }
         ]
-        
+
         # Clear existing data
         product_references.delete_many({})
         listings.delete_many({})
-        
+
         # Insert sample data
         product_references.insert_many(sample_products)
         logger.info("Sample product references inserted successfully")
-        
+
         # Insert sample listings
         sample_listings = [
             {
@@ -113,10 +138,10 @@ def setup_product_database():
                 "status": "active"
             }
         ]
-        
+
         listings.insert_many(sample_listings)
-        logger.info("Sample listings inserted successfully")
-        
+        logger.info("Sample listings inserted successfully.")
+
     except Exception as e:
         logger.error(f"Error setting up database: {e}")
     finally:
